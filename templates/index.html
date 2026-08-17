@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>OCR Document, Summarizer & Translator</title>
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+  <main class="shell">
+    <section class="panel">
+      <div class="topbar">
+        <div>
+          <h1>OCR Document, Summarizer & Translator</h1>
+          <p>Model: <strong id="model">{{ model }}</strong> · PDF limit: {{ max_pdf_pages }} pages · Upload limit: {{ max_upload_mb }} MB</p>
+        </div>
+        <button id="clearBtn" type="button">Reset</button>
+      </div>
+
+      <form id="docForm">
+        <label class="fileBox">
+          <input id="file" name="file" type="file" accept=".jpg,.jpeg,.png,.pdf">
+          <span>Choose JPG, PNG, or PDF</span>
+        </label>
+
+        <div class="grid">
+          <label>Action
+            <select id="action" name="action">
+              <option value="ocr">OCR</option>
+              <option value="translate">Translate</option>
+              <option value="summarize">Summarize</option>
+              <option value="extract">Extract structured data</option>
+              <option value="ask">Ask document</option>
+            </select>
+          </label>
+          <label class="conditional translate">Target language
+            <select name="target_language">
+              <option>Indonesian</option>
+              <option>English</option>
+            </select>
+          </label>
+          <label class="conditional summarize">Summary length
+            <select name="detail">
+              <option value="short">Short</option>
+              <option value="detailed">Detailed</option>
+            </select>
+          </label>
+        </div>
+
+        <label class="conditional extract">Desired fields
+          <textarea name="fields" rows="3" placeholder="invoice_number, date, vendor, total"></textarea>
+        </label>
+        <label class="conditional ask">Question
+          <textarea name="question" rows="3" placeholder="What is the total amount due?"></textarea>
+        </label>
+        <label>Previously extracted text
+          <textarea id="ocrText" name="ocr_text" rows="8" placeholder="After OCR, this is reused for translate, summarize, extract, and ask."></textarea>
+        </label>
+
+        <button id="submitBtn" type="submit">Process</button>
+      </form>
+    </section>
+
+    <section class="panel resultPanel">
+      <div class="resultHeader">
+        <div>
+          <h2>Result</h2>
+          <p id="status">Idle</p>
+        </div>
+        <div class="actions">
+          <button id="copyBtn" type="button">Copy</button>
+          <button id="txtBtn" type="button">TXT</button>
+          <button id="jsonBtn" type="button">JSON</button>
+        </div>
+      </div>
+      <pre id="result"></pre>
+    </section>
+  </main>
+  <script src="/static/app.js?v=20260817-ocr-fix"></script>
+</body>
+</html>

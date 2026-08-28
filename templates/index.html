@@ -12,7 +12,7 @@
       <div class="topbar">
         <div>
           <h1>OCR Document, Summarizer & Translator</h1>
-          <p>Model: <strong id="model">{{ model }}</strong> · PDF limit: {{ max_pdf_pages }} pages · Upload limit: {{ max_upload_mb }} MB</p>
+          <p>Model: <strong id="model">9router</strong> · PDF limit: {{ max_pdf_pages }} pages · Upload limit: {{ max_upload_mb }} MB</p>
         </div>
         <button id="clearBtn" type="button">Reset</button>
       </div>
@@ -24,6 +24,11 @@
         </label>
 
         <div class="grid">
+          <label>OCR model
+            <select id="modelSelect" name="model" data-default="{{ model }}">
+              {% for available_model in models %}<option value="{{ available_model }}"{% if available_model == model %} selected{% endif %}>{{ available_model }}</option>{% endfor %}
+            </select>
+          </label>
           <label>Action
             <select id="action" name="action">
               <option value="ocr">OCR</option>
@@ -76,6 +81,6 @@
       <pre id="result"></pre>
     </section>
   </main>
-  <script src="/static/app.js?v=20260817-ocr-fix"></script>
+  <script src="/static/app.js?v=20260828-model-status"></script>
 </body>
 </html>

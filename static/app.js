@@ -4,11 +4,27 @@ const statusEl = document.getElementById("status");
 const resultEl = document.getElementById("result");
 const ocrText = document.getElementById("ocrText");
 const submitBtn = document.getElementById("submitBtn");
+const modelSelect = document.getElementById("modelSelect");
 let lastResult = "";
 
 function updateFields() {
   document.querySelectorAll(".conditional").forEach((el) => el.classList.remove("show"));
   document.querySelectorAll(`.${action.value}`).forEach((el) => el.classList.add("show"));
+}
+
+async function refreshModels() {
+  const selected = modelSelect.value || modelSelect.dataset.default;
+  const response = await fetch("/models");
+  if (!response.ok) return;
+  const models = await response.json();
+  modelSelect.replaceChildren(...models.map((model) => {
+    const option = document.createElement("option");
+    option.value = model.id;
+    option.textContent = model.available ? model.id : `${model.id} (Unavailable)`;
+    option.disabled = !model.available;
+    option.selected = model.id === selected;
+    return option;
+  }));
 }
 
 async function download(endpoint, content) {
@@ -32,6 +48,7 @@ document.getElementById("clearBtn").addEventListener("click", () => {
   lastResult = "";
   statusEl.textContent = "Idle";
   updateFields();
+refreshModels();
 });
 document.getElementById("copyBtn").addEventListener("click", async () => {
   await navigator.clipboard.writeText(lastResult || resultEl.textContent);
@@ -69,6 +86,7 @@ form.addEventListener("submit", async (event) => {
     statusEl.textContent = "Error";
     resultEl.textContent = error.message;
   } finally {
+    await refreshModels();
     window.clearInterval(timer);
     submitBtn.disabled = false;
     const elapsed = ((performance.now() - started) / 1000).toFixed(1);

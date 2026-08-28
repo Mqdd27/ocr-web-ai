@@ -23,8 +23,9 @@ TEMP_DIR = BASE_DIR / "temp"
 STATIC_DIR = BASE_DIR / "static"
 TEMPLATE_DIR = BASE_DIR / "templates"
 
-OLLAMA_URL = os.getenv("OLLAMA_URL", "http://127.0.0.1:11434")
-VISION_MODEL = os.getenv("VISION_MODEL", "qwen3.5:2b")
+AI_BASE_URL = os.getenv("AI_BASE_URL", "https://ai.mqdd.my.id/v1")
+AI_API_KEY = os.getenv("AI_API_KEY", "")
+VISION_MODEL = os.getenv("VISION_MODEL", "ollama-local/qwen3.5:2b")
 MAX_UPLOAD_MB = int(os.getenv("MAX_UPLOAD_MB", "25"))
 MAX_PDF_PAGES = int(os.getenv("MAX_PDF_PAGES", "10"))
 REQUEST_TIMEOUT_SECONDS = int(os.getenv("REQUEST_TIMEOUT_SECONDS", "600"))
@@ -37,6 +38,7 @@ app = FastAPI(title="Local Document AI")
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 templates = Jinja2Templates(directory=TEMPLATE_DIR)
 vision_semaphore = asyncio.Semaphore(VISION_CONCURRENCY)
+unavailable_models: dict[str, str] = {}
 TEMP_DIR.mkdir(parents=True, exist_ok=True)
 
 
@@ -110,42 +112,50 @@ def image_to_base64(path: Path) -> str:
     return base64.b64encode(path.read_bytes()).decode("ascii")
 
 
-async def ollama_chat(messages: list[dict], timeout: Optional[int] = None) -> str:
-    payload = {
-        "model": VISION_MODEL,
-        "messages": messages,
-        "stream": False,
-        "think": False,
-        "options": {"temperature": 0.0},
-    }
-    async with httpx.AsyncClient(timeout=httpx.Timeout(timeout or REQUEST_TIMEOUT_SECONDS)) as client:
-        response = await client.post(f"{OLLAMA_URL}/api/chat", json=payload)
+async def get_vision_models() -> list[str]:
+    async with httpx.AsyncClient(timeout=30) as client:
+        response = await client.get(f"{AI_BASE_URL}/models", headers={"Authorization": f"Bearer {AI_API_KEY}"})
     if response.status_code >= 400:
-        raise HTTPException(status_code=502, detail=f"Ollama error: {response.text[:500]}")
-    data = response.json()
-    return data.get("message", {}).get("content", "").strip()
+        raise HTTPException(status_code=502, detail=f"9router models error: {response.text[:500]}")
+    return sorted(item["id"] for item in response.json().get("data", []) if item.get("capabilities", {}).get("vision"))
 
+@app.get("/models")
+async def models():
+    return [{"id": model, "available": model not in unavailable_models, "error": unavailable_models.get(model)} for model in await get_vision_models()]
 
-async def ocr_image(path: Path) -> str:
+async def ai_chat(messages: list[dict], model: str, timeout: Optional[int] = None) -> str:
+    models = await get_vision_models()
+    if model not in models:
+        raise HTTPException(status_code=400, detail="Unsupported vision model.")
+    payload = {"model": model, "messages": messages, "temperature": 0.0}
+    async with httpx.AsyncClient(timeout=httpx.Timeout(timeout or REQUEST_TIMEOUT_SECONDS)) as client:
+        response = await client.post(f"{AI_BASE_URL}/chat/completions", headers={"Authorization": f"Bearer {AI_API_KEY}"}, json=payload)
+    if response.status_code >= 400:
+        unavailable_models[model] = response.text[:200]
+        raise HTTPException(status_code=502, detail=f"9router error: {response.text[:500]}")
+    unavailable_models.pop(model, None)
+    return response.json().get("choices", [{}])[0].get("message", {}).get("content", "").strip()
+
+async def ocr_image(path: Path, model: str) -> str:
     encoded = image_to_base64(path)
-    messages = [{"role": "user", "content": OCR_PROMPT, "images": [encoded]}]
+    messages = [{"role": "user", "content": [{"type": "text", "text": OCR_PROMPT}, {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{encoded}"}}]}]
     async with vision_semaphore:
-        return await ollama_chat(messages)
+        return await ai_chat(messages, model)
 
 
-async def ocr_file(path: Path, suffix: str, work_dir: Path) -> str:
+async def ocr_file(path: Path, suffix: str, work_dir: Path, model: str) -> str:
     if suffix == ".pdf":
         pages = convert_pdf_to_images(path, work_dir)
         results = []
         for idx, page in enumerate(pages, start=1):
-            text = await ocr_image(page)
+            text = await ocr_image(page, model)
             results.append(f"--- Page {idx} ---\n{text}")
         return "\n\n".join(results)
     verify_image(path)
-    return await ocr_image(path)
+    return await ocr_image(path, model)
 
 
-async def operate_on_text(action: str, text: str, target_language: str = "Indonesian", detail: str = "short", fields: str = "", question: str = "") -> str:
+async def operate_on_text(action: str, text: str, model: str, target_language: str = "Indonesian", detail: str = "short", fields: str = "", question: str = "") -> str:
     if not text.strip():
         raise HTTPException(status_code=400, detail="Extracted text is required for this action.")
     prompts = {
@@ -156,16 +166,18 @@ async def operate_on_text(action: str, text: str, target_language: str = "Indone
     }
     if action not in prompts:
         raise HTTPException(status_code=400, detail="Unsupported action.")
-    return await ollama_chat([{"role": "user", "content": prompts[action]}])
+    return await ai_chat([{"role": "user", "content": prompts[action]}], model)
 
 
 @app.get("/", response_class=HTMLResponse)
 async def index(request: Request):
+    models = await get_vision_models()
     return templates.TemplateResponse(
         "index.html",
         {
             "request": request,
             "model": VISION_MODEL,
+            "models": models,
             "max_upload_mb": MAX_UPLOAD_MB,
             "max_pdf_pages": MAX_PDF_PAGES,
         },
@@ -174,7 +186,7 @@ async def index(request: Request):
 
 @app.get("/health")
 async def health():
-    return {"status": "ok", "model": VISION_MODEL, "ollama_url": OLLAMA_URL}
+    return {"status": "ok", "model": VISION_MODEL, "ai_base_url": AI_BASE_URL}
 
 
 @app.post("/process")
@@ -186,6 +198,7 @@ async def process(
     detail: str = Form("short"),
     fields: str = Form(""),
     question: str = Form(""),
+    model: str = Form(VISION_MODEL),
 ):
     started = time.monotonic()
     work_dir = Path(tempfile.mkdtemp(prefix="docai-", dir=TEMP_DIR))
@@ -196,10 +209,10 @@ async def process(
                 raise HTTPException(status_code=400, detail="Upload a document or provide previously extracted text.")
             suffix = validate_upload(file)
             upload_path = await save_upload(file, suffix, work_dir)
-            extracted_text = await ocr_file(upload_path, suffix, work_dir)
-            result = extracted_text if action == "ocr" else await operate_on_text(action, extracted_text, target_language, detail, fields, question)
+            extracted_text = await ocr_file(upload_path, suffix, work_dir, model)
+            result = extracted_text if action == "ocr" else await operate_on_text(action, extracted_text, model, target_language, detail, fields, question)
         else:
-            result = await operate_on_text(action, extracted_text, target_language, detail, fields, question)
+            result = await operate_on_text(action, extracted_text, model, target_language, detail, fields, question)
         elapsed = round(time.monotonic() - started, 2)
         structured = None
         if action == "extract":
@@ -210,7 +223,7 @@ async def process(
         return JSONResponse(
             {
                 "action": action,
-                "model": VISION_MODEL,
+                "model": model,
                 "elapsed_seconds": elapsed,
                 "extracted_text": extracted_text,
                 "result": result,
